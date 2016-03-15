@@ -4,3 +4,4 @@ version = "0.1.0"
 authors = ["Damien Whitten <damien@rebase.com.au>"]
 
 [dependencies]
+hyper = "*"
