@@ -108,3 +108,133 @@ Hälló, wørld
 ```
 
 git tag v0.0.1
+
+
+Step 2: JSON
+============
+
+This is going to be a JSON API server. This step will encode a struct as JSON and send it.
+
+There is some work on 'better' json libraries than the 'default' one, but I am just going to use rustc_serialize here.
+
+Refresher, adding a dependency:
+
+- Include it in the Cargo.toml file
+- Include a marker in the .rs file you need it
+- 'use' the parts of it you want.
+
+Oh, but wait, a gotcha here - the rustc_serialize is added as rustc-serialize. But only in Cargo.toml. (_ vs -)
+
+```rust
+extern crate hyper;
+extern crate rustc_serialize;
+
+use hyper::server::{Server, Request, Response};
+use std::io::Write;
+use rustc_serialize::json;
+
+#[derive(RustcDecodable, RustcEncodable)]
+struct Hello {
+    greeting: String,
+}
+
+fn hello(req: Request, res: Response) {
+    let hw = Hello { greeting: "Hälló, wørld".to_string() };
+    let encoded = json::encode(&hw).unwrap();
+    res.start().unwrap().write(encoded.as_bytes());
+}
+
+
+fn main() {
+    Server::http("0.0.0.0:8080").unwrap().handle(hello).unwrap();
+}
+```
+
+A few things here.
+
+The derive tags tell rust to 'automatically derive' the Encodeable and Decodable traits. I have no idea how that works. But it does, for now. What it means for now is that the json::encode call works for that struct.
+
+The '.to_string()'. Isn't it already a String? well, no. Try it without, the compiler will tell you it's a "&'static str" - that is, a borrowable, static reference to a 'str' type. Or something. For now, I'm just copying the example in [the docs](https://doc.rust-lang.org/rustc-serialize/rustc_serialize/json/index.html).
+
+```bash
+$ curl localhost:8080
+{"greeting":"Hälló, wørld"}
+```
+
+It seems odd that we are converting to a string, then to bytes, then writing the bytes to the writer - At least after node and go - can we encode directly to the writer?
+
+[Not Easily](https://github.com/rust-lang-nursery/rustc-serialize/pull/125), but we aren't about ease, right?
+
+The basic problem is that the hyper response is an std::io::Write, but the json encoder expects a core::fmt::Write.
+
+std::io::Write exposes:
+
+```rust
+fn write(&mut self, buf: &[u8]) -> Result<usize>
+```
+
+core::fmt::Write requires:
+
+```rust
+fn write_str(&mut self, s: &str) -> Result
+```
+
+To let's write an adaptor!
+
+We need a struct which wraps the writer we have: std, but looks like the writer we need: core.
+
+
+```rust
+extern crate hyper;
+extern crate rustc_serialize;
+extern crate core;
+
+use hyper::server::{Server, Request, Response};
+use rustc_serialize::json;
+use rustc_serialize::Encodable;
+use std::io::Write;
+
+#[derive(RustcDecodable, RustcEncodable)]
+struct Hello {
+    greeting: String,
+}
+
+// Wraps up one type of writer (hyper::net::streaming), which is given by the hyper server to write
+// to, and exposes it as the type core::fmt::Write, which is expected by json::Encoder::new.
+struct WriteWrap<'a> {
+    res: Response<'a, hyper::net::Streaming>,
+}
+
+impl<'a> core::fmt::Write for WriteWrap<'a> {
+    fn write_str(&mut self, s: &str) -> core::fmt::Result {
+        // Attempt to write to the response, and unwrap the error to make a fmt::Result instead of
+        // an io::Result
+        match self.res.write(s.as_bytes()) {
+            Ok(_) => Ok(()),
+            Err(_) => Err(core::fmt::Error),
+        }
+    }
+}
+
+fn hello(req: Request, res: Response) {
+    let hw = Hello { greeting: "Hälló, wørld".to_string() };
+
+    // Create a new WriteWrapper for the response
+    let wrapped = &mut WriteWrap { res: res.start().unwrap() };
+
+    // Create a new json::Encoder with the wrapped writer
+    let enc = &mut json::Encoder::new(wrapped);
+
+    // The [RustcEncodable] trait adds the 'encode' method to the hw struct.
+    hw.encode(enc).unwrap();
+}
+
+
+fn main() {
+    Server::http("0.0.0.0:8080").unwrap().handle(hello).unwrap();
+}
+```
+
+I have no idea if that was actually more efficient. Gut feel?
+
+git tag v0.0.2

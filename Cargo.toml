@@ -5,3 +5,4 @@ authors = ["Damien Whitten <damien@rebase.com.au>"]
 
 [dependencies]
 hyper = "*"
+rustc-serialize = "*"
