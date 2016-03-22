@@ -11,6 +11,7 @@ use rustc_serialize::json;
 use rustc_serialize::Encodable;
 use std::io::Write;
 use std::convert::AsRef;
+use std::sync::Mutex;
 use time::Timespec;
 
 use rusqlite::Connection;
@@ -27,7 +28,7 @@ impl<'a> core::fmt::Write for WriteWrap<'a> {
         // Attempt to write to the response, and unwrap the error to make a fmt::Result instead of
         // an io::Result
         //
-        if (s.len() < 1) {
+        if s.len() < 1 {
             return Ok(());
         }
 
@@ -44,20 +45,7 @@ struct Timeslot {
     time: Timespec,
 }
 
-fn times_handler<'a>(req: Request) -> Vec<Timeslot> {
-
-    // TODO: This should, obviously, not be in the handler.
-    let conn = Connection::open_in_memory().unwrap();
-    conn.execute("CREATE TABLE timeslot(
-     time TIMESTAMP NOT NULL PRIMARY KEY
-     )",
-                 &[])
-        .unwrap();
-
-    let t = Timeslot { time: time::get_time() };
-    conn.execute("INSERT INTO timeslot (time) VALUES ($1)", &[&t.time]).unwrap();
-
-    // Begin real handler code.
+fn times_handler<'a>(req: Request, conn: &Connection) -> Vec<Timeslot> {
 
     // Select all
     let mut stmt = conn.prepare("SELECT time FROM timeslot").unwrap();
@@ -74,34 +62,53 @@ fn times_handler<'a>(req: Request) -> Vec<Timeslot> {
     timeslots
 }
 
-fn handler(req: Request, res: Response) {
-    let path = match req.uri {
-        uri::RequestUri::AbsolutePath(ref path) => path.clone(),
-        _ => return,
-    };
 
-    let hw = match path.as_ref() {
-        "/times" => times_handler(req),
-        _ => return, // 404
-    };
+struct Handler {
+    conn: Mutex<Connection>,
+}
 
-    // Create a new WriteWrapper for the response
-    let wrapped = &mut WriteWrap { res: res.start().unwrap() };
+impl hyper::server::Handler for Handler {
+    fn handle(&self, req: Request, res: Response) {
+        let path = match req.uri {
+            uri::RequestUri::AbsolutePath(ref path) => path.clone(),
+            _ => return,
+        };
 
-    {
-        // Create a new json::Encoder with the wrapped writer
-        let enc = &mut json::Encoder::new(wrapped);
+        let hw = match path.as_ref() {
+            "/times" => times_handler(req, &self.conn.lock().unwrap()),
+            _ => return, // 404
+        };
 
-        // The [RustcEncodable] trait adds the 'encode' method to the hw struct.
-        hw.encode(enc).unwrap();
-    }
-    {
-        use core::fmt::Write;
-        wrapped.write_str("\n");
+        // Create a new WriteWrapper for the response
+        let wrapped = &mut WriteWrap { res: res.start().unwrap() };
+
+        {
+            // Create a new json::Encoder with the wrapped writer
+            let enc = &mut json::Encoder::new(wrapped);
+
+            // The [RustcEncodable] trait adds the 'encode' method to the hw struct.
+            hw.encode(enc).unwrap();
+        }
+        {
+            use core::fmt::Write;
+            wrapped.write_str("\n");
+        }
     }
 }
 
 
 fn main() {
+    let conn = Connection::open_in_memory().unwrap();
+    conn.execute("CREATE TABLE timeslot(
+     time TIMESTAMP NOT NULL PRIMARY KEY
+     )",
+                 &[])
+        .unwrap();
+
+    let t = Timeslot { time: time::get_time() };
+    conn.execute("INSERT INTO timeslot (time) VALUES ($1)", &[&t.time]).unwrap();
+
+
+    let handler = Handler { conn: Mutex::new(conn) };
     Server::http("0.0.0.0:8080").unwrap().handle(handler).unwrap();
 }

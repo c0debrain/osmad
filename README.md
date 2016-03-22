@@ -432,3 +432,62 @@ impl<'a> core::fmt::Write for WriteWrap<'a> {
     }
 }
 ```
+
+
+Moving along (nothing to see here) - I'll make the database a static singleton first.
+The internet appears to suggest very subtly that singletons and statics make no
+sense in rust, and that I might consider 'passing context objects' instead. But
+how do I do that? My handlers are functions, somehow I have to give context to
+those functions.
+
+The hyper handler function actually takes 'trait', which is odd, because I'm
+passing it a function. My guess is that, since the trait only has one required
+method, a function which has the same signature without the &self ref must
+automatically implement the trait. Either way, to put context in, I'll be using
+a struct instead.
+
+```rust
+struct handler {
+	conn: Mutex<Connection>,
+};
+
+impl hyper::server::Handler for handler {
+	fn handle(&self, req: Request, res: Response) {
+		// as above
+        let hw = match path.as_ref() {
+            "/times" => times_handler(req, &self.conn.lock().unwrap()),
+            _ => return, // 404
+        };
+	}
+}	
+
+fn times_handler<'a>(req: Request, conn: &Connection) -> Vec<Timeslot> {
+	// use the database connection
+}
+
+
+fn main() {
+	let conn = Connection::open_in_memory().unwrap();
+	// set up some data
+	// use the conn in a Mutex.
+    let handler = Handler { conn: Mutex::new(conn) };
+    Server::http("0.0.0.0:8080").unwrap().handle(handler).unwrap();
+}
+```
+
+This works, but it's terrible code design - The sqlite library only handles one
+call at a time (not sure why, I'm fairly sure sqlite can do multiple threads,
+but anyway) so I've had to wrap it in a mutex. That's all fine, but the place
+it's wrapped is prior to calling the handler (imagine it prior to calling ANY
+handler), meaning the server can only deal with one request at a time.
+
+To improve that, I'll create a 'data' struct which will wrap up all database
+calls, and can lock the mutex only when required. Already I'm scared about how
+the whole borrowing thing will work here - Will I be able to return the
+query_map iterator? If so, when will the mutex be released? (The latter is more
+about how the library works than how rust does borrowing)
+
+But before all of that - this code is a MESS! One file for the whole thing?
+
+git tag 0.0.4
+
