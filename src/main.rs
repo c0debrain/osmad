@@ -9,17 +9,27 @@ use hyper::server::{Server, Request, Response};
 use hyper::uri;
 use std::convert::AsRef;
 use std::sync::Mutex;
-use time::{Tm, TmFmt, Duration};
+use time::{Tm, Duration};
 
 use rusqlite::Connection;
 
 mod encode;
 
 
-#[derive(RustcDecodable, RustcEncodable)]
+#[derive(RustcEncodable)]
 struct Timeslot {
-    time: String,
+    time: IOTime,
 }
+
+struct IOTime(time::Timespec);
+
+impl rustc_serialize::Encodable for IOTime {
+    fn encode<S: rustc_serialize::Encoder>(&self, s: &mut S) -> Result<(), S::Error> {
+        s.emit_str(format!("{}", (time::at(self.0).rfc3339())).as_str())
+    }
+}
+
+
 
 fn times_handler<'a>(req: Request, res: Response, conn: &Connection) {
 
@@ -27,9 +37,7 @@ fn times_handler<'a>(req: Request, res: Response, conn: &Connection) {
     let mut stmt = conn.prepare("SELECT time FROM timeslot").unwrap();
 
     // Turn them into an iterator
-    let timeslot_iter = stmt.query_map(&[], |row| {
-                                Timeslot { time: format!("{}", time::at(row.get(0)).rfc3339()) }
-                            })
+    let timeslot_iter = stmt.query_map(&[], |row| Timeslot { time: IOTime(row.get(0)) })
                             .unwrap();
 
     // For now, convert the iterator into a vector, later, maybe we can encode the json on the fly?
