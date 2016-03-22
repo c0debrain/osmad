@@ -565,3 +565,42 @@ Instead of timespec, I've used 'tm', which is sort of the same thing, but with
 formats and timezones.
 
 git tag 0.0.6
+
+Part 7: Implement Encodable trait
+=================================
+
+The default encoding for a Timespec isn't great. I want to use RFC3339 in the json responses.
+
+The easiest way to do this is just to use the String type, and encode it in RFC3339 when parsing the database rows, but that... well you know why that's not the best option.
+
+The first thing was to remove derive(RustcDecodable) - I never used it, and I don't intend to implement it just yet.
+
+You can't implement traits outside of your crate for types outside of your crate, otherwise this would be as simple as implementing Encodable for Timespec.
+
+I hope there is a better way of doing this, but I have used a Tuple Struct with a single entry.
+
+```rust
+#[derive(RustcEncodable)]
+struct Timeslot {
+    time: IOTime,
+}
+
+struct IOTime(time::Timespec);
+
+impl rustc_serialize::Encodable for IOTime {
+    fn encode<S: rustc_serialize::Encoder>(&self, s: &mut S) -> Result<(), S::Error> {
+        s.emit_str(format!("{}", (time::at(self.0).rfc3339())).as_str())
+    }
+}
+    
+
+// And where it is used:
+let timeslot_iter = stmt.query_map(&[], |row| Timeslot { time: IOTime(row.get(0)) })
+                            .unwrap();
+```
+
+... Look, it works.
+
+This code continues to get messy. It's time to go back and fix some things.
+
+git tag 0.0.7
