@@ -505,3 +505,63 @@ issue above, but also provides more control to how the response is written.
 Secondly - that whole write wrapper and method and such are very much 'their
 own thing', so I've made them into a module.
 
+- Shove them in a file
+- Use them with `mod filename` (without .rs)
+
+Done.
+
+git tag 0.0.5
+
+Part 6: Iterator
+================
+
+The last working version adds one single time. I want to add a whole range.
+
+```rust
+struct TimeIterator {
+    end: time::Tm,
+    interval: time::Duration,
+    current: time::Tm,
+}
+
+impl TimeIterator {
+    fn new(start: Tm, end: Tm, interval: time::Duration) -> TimeIterator {
+        return TimeIterator {
+            end: end,
+            current: start - interval,
+            interval: interval,
+        };
+    }
+}
+
+impl Iterator for TimeIterator {
+    type Item = time::Tm;
+    fn next(&mut self) -> Option<time::Tm> {
+        self.current = self.current + self.interval;
+        if self.current >= self.end {
+            None
+        } else {
+            Some(self.current)
+        }
+    }
+}
+
+// Then in main:
+
+for t in TimeIterator::new(
+	time::strptime("2016-01-01T07:00:00+11:00", RFC3339).unwrap(),
+	time::strptime("2016-01-01T09:00:00+11:00", RFC3339).unwrap(),
+	Duration::minutes(6)) {
+		conn.execute("INSERT INTO timeslot (time) VALUES ($1)",
+			&[&t.to_timespec()])
+		.unwrap();
+    }
+```
+
+This creates a new iterator from one datetime to another, stepping by 6 minutes
+(auditions last 6 minutes each), and adds them to the database.
+
+Instead of timespec, I've used 'tm', which is sort of the same thing, but with
+formats and timezones.
+
+git tag 0.0.6
