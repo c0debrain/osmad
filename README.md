@@ -495,4 +495,13 @@ Part 5: Organising Code
 =======================
 
 The first cleanup: Our handler method returns a concrete type. That's OK
-because we only have one type, but won't cut it later.
+because we only have one type, but won't cut it later. It looks like returning,
+say, 'something which implements the Encodable trait' is in the too hard
+basket, and not really how things are done - so will tackle that challenge
+later. So I've refactored a bit to make part after the path matcher into a
+function that the handler functions themselves can call. This prevents the
+issue above, but also provides more control to how the response is written.
+
+Secondly - that whole write wrapper and method and such are very much 'their
+own thing', so I've made them into a module.
+
