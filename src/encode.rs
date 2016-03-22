@@ -6,11 +6,12 @@ use hyper::server::{Request, Response};
 use rustc_serialize::json;
 use rustc_serialize::Encodable;
 use std::io::Write;
+use std::io::BufWriter;
 
 // Wraps up one type of writer (hyper::net::streaming), which is given by the hyper server to write
 // to, and exposes it as the type core::fmt::Write, which is expected by json::Encoder::new.
 struct WriteWrap<'a> {
-    res: Response<'a, hyper::net::Streaming>,
+    res: &'a mut Write,
 }
 
 impl<'a> core::fmt::Write for WriteWrap<'a> {
@@ -31,7 +32,9 @@ impl<'a> core::fmt::Write for WriteWrap<'a> {
 
 pub fn write_object<T: Encodable>(_: Request, res: Response, obj: &T) {
     // For now, only writes JSON, later, could read the Accept header
-    let wrapped = &mut WriteWrap { res: res.start().unwrap() };
+    let writer: &mut Write = &mut res.start().unwrap();
+    let mut buffered = BufWriter::new(writer);
+    let wrapped = &mut WriteWrap { res: &mut buffered };
 
     {
         let enc = &mut json::Encoder::new(wrapped);

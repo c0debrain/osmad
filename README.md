@@ -604,3 +604,154 @@ let timeslot_iter = stmt.query_map(&[], |row| Timeslot { time: IOTime(row.get(0)
 This code continues to get messy. It's time to go back and fix some things.
 
 git tag 0.0.7
+
+Detour - The issue with the json encoding.
+==========================================
+
+```bash
+$ telnet localhost 8080
+Trying ::1...
+Trying 127.0.0.1...
+Connected to localhost.
+Escape character is '^]'.
+GET /times HTTP/1.1
+
+HTTP/1.1 200 OK
+Date: Tue, 22 Mar 2016 06:34:47 GMT
+Transfer-Encoding: chunked
+
+1
+[
+1
+{
+1
+"
+4
+time
+1
+"
+1
+:
+1
+"
+19
+2016-01-01T08:00:00+11:00
+1
+"
+1
+```
+etc..
+
+If you recall, I was doing this for efficiency. The method 'everyone else'
+seems to use is to encode json as a string, then write that, but being a
+smartarse, I thought I could do better.
+
+What I've done, however, is... somewhat less than efficient.
+
+The Encodable implementations make many calls to the writer, and each one
+of them is being sent to the response writer, which makes a syscall to
+actually write it to the TCP connection, which adds quite an overhead, not
+to mention approximately triples the network transfer (each line ends with
+a \r\n)
+
+Rust has a buffered writer to fix this. I'm implementing
+it more as an experiment than useful. The json encoding of
+every object this particular app will ever write will probably
+fit well inside what the buffer will buffer. So it will be no better than
+(slightly worse than?) the string version.
+
+Before using the buffer, I'll have to
+fix the workaround I have already. I
+wanted WriteWrap to wrap any io.Write,
+but I couldn't figure out how to make
+it compile with just io.Write, so
+instead I just pasted in what the
+compiler said I had. Let's see if I've learned anything
+
+What 'Works':
+```rust
+struct WriteWrap<'a> {
+    res: Response<'a, hyper::net::Streaming>,
+}
+```
+
+What I Want:
+
+```rust
+struct WriteWrap {
+    res: Write,
+}
+```
+
+Why the compiler won't let me have ANY fun:
+
+```
+   Compiling osmad v0.1.0 (file:///home/daemonl/learn/osmad)
+src/encode.rs:34:41: 34:61 error: mismatched types:
+ expected `std::io::Write + 'static`,
+    found `hyper::server::response::Response<'_, hyper::net::Streaming>`
+(expected trait std::io::Write,
+    found struct `hyper::server::response::Response`) [E0308]
+src/encode.rs:34     let wrapped = &mut WriteWrap { res: res.start().unwrap() };
+```
+
+Ok, so I fixed it. There's no point pretending I didn't randomly add & and mut until it compiled.
+
+```rust
+
+struct WriteWrap<'a> {
+    res: &'a mut Write,
+}
+
+impl<'a> core::fmt::Write for WriteWrap<'a> {
+	fn write_str(&mut self, s: &str) -> core::fmt::Result {
+		// Do Things
+	}
+}
+
+let wrapped = &mut WriteWrap { res: &mut res.start().unwrap() };
+```
+
+The `<a'> and &'a` just means that the res
+lives as long as the struct. Not sure why that
+isn't automatic.
+
+Then the writer must be mutable - because to
+write to it it has to be (apparently) and I
+didn't have to say mut before because it was
+probably implied by the type I was using
+
+And to have it be mutable, we have to borrow a mutable reference.
+
+
+Buffer Time.
+------------
+```rust
+    let writer: &mut Write = &mut res.start().unwrap();
+    let mut buffered = BufWriter::new(writer);
+    let wrapped = &mut WriteWrap { res: &mut buffered };
+```
+
+And to test:
+
+```
+$ telnet localhost 8080
+Trying ::1...
+Trying 127.0.0.1...
+Connected to localhost.
+Escape character is '^]'.
+GET /times HTTP/1.1
+
+HTTP/1.1 200 OK
+Date: Tue, 22 Mar 2016 07:05:35 GMT
+Transfer-Encoding: chunked
+
+2E6
+[{"time":"2016-01-01T08:00:00+11:00"},{"time":"2016-01-01T08:06:00+11:00"},{"time":"2016-01-01T08:12:00+11:00"},{"time":"2016-01-01T08:18:00+11:00"},{"time":"2016-01-01T08:24:00+11:00"},{"time":"2016-01-01T08:30:00+11:00"},{"time":"2016-01-01T08:36:00+11:00"},{"time":"2016-01-01T08:42:00+11:00"},{"time":"2016-01-01T08:48:00+11:00"},{"time":"2016-01-01T08:54:00+11:00"},{"time":"2016-01-01T09:00:00+11:00"},{"time":"2016-01-01T09:06:00+11:00"},{"time":"2016-01-01T09:12:00+11:00"},{"time":"2016-01-01T09:18:00+11:00"},{"time":"2016-01-01T09:24:00+11:00"},{"time":"2016-01-01T09:30:00+11:00"},{"time":"2016-01-01T09:36:00+11:00"},{"time":"2016-01-01T09:42:00+11:00"},{"time":"2016-01-01T09:48:00+11:00"},{"time":"2016-01-01T09:54:00+11:00"}]
+
+0
+
+```
+I'm calling that a success. Until I realise I don't actually understand the mut and & syntax.
+
+git tag 0.0.8
