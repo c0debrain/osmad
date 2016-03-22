@@ -491,3 +491,8 @@ But before all of that - this code is a MESS! One file for the whole thing?
 
 git tag 0.0.4
 
+Part 5: Organising Code
+=======================
+
+The first cleanup: Our handler method returns a concrete type. That's OK
+because we only have one type, but won't cut it later.

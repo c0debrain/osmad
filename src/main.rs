@@ -39,28 +39,43 @@ impl<'a> core::fmt::Write for WriteWrap<'a> {
     }
 }
 
+fn write_object<T: Encodable>(_: Request, res: Response, obj: &T) {
+    // For now, only writes JSON, later, could read the Accept header
+    let wrapped = &mut WriteWrap { res: res.start().unwrap() };
+
+    {
+        let enc = &mut json::Encoder::new(wrapped);
+        obj.encode(enc).unwrap();
+    }
+    {
+        use core::fmt::Write;
+        wrapped.write_str("\n").unwrap();
+    }
+}
+
 
 #[derive(RustcDecodable, RustcEncodable)]
 struct Timeslot {
     time: Timespec,
 }
 
-fn times_handler<'a>(req: Request, conn: &Connection) -> Vec<Timeslot> {
+fn times_handler<'a>(req: Request, res: Response, conn: &Connection) {
 
     // Select all
     let mut stmt = conn.prepare("SELECT time FROM timeslot").unwrap();
 
     // Turn them into an iterator
-    let mut timeslot_iter = stmt.query_map(&[], |row| Timeslot { time: row.get(0) })
-                                .unwrap();
+    let timeslot_iter = stmt.query_map(&[], |row| Timeslot { time: row.get(0) })
+                            .unwrap();
 
     // For now, convert the iterator into a vector, later, maybe we can encode the json on the fly?
     let mut timeslots: Vec<Timeslot> = Vec::new();
     for ts in timeslot_iter {
         timeslots.push(ts.unwrap());
     }
-    timeslots
+    write_object(req, res, &timeslots);
 }
+
 
 
 struct Handler {
@@ -74,25 +89,11 @@ impl hyper::server::Handler for Handler {
             _ => return,
         };
 
-        let hw = match path.as_ref() {
-            "/times" => times_handler(req, &self.conn.lock().unwrap()),
+        match path.as_ref() {
+            "/times" => times_handler(req, res, &self.conn.lock().unwrap()),
             _ => return, // 404
         };
 
-        // Create a new WriteWrapper for the response
-        let wrapped = &mut WriteWrap { res: res.start().unwrap() };
-
-        {
-            // Create a new json::Encoder with the wrapped writer
-            let enc = &mut json::Encoder::new(wrapped);
-
-            // The [RustcEncodable] trait adds the 'encode' method to the hw struct.
-            hw.encode(enc).unwrap();
-        }
-        {
-            use core::fmt::Write;
-            wrapped.write_str("\n");
-        }
     }
 }
 
