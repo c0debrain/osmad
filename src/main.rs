@@ -3,9 +3,12 @@ extern crate rustc_serialize;
 extern crate core;
 
 use hyper::server::{Server, Request, Response};
+use hyper::uri;
 use rustc_serialize::json;
 use rustc_serialize::Encodable;
 use std::io::Write;
+
+use std::convert::AsRef;
 
 #[derive(RustcDecodable, RustcEncodable)]
 struct Hello {
@@ -29,8 +32,25 @@ impl<'a> core::fmt::Write for WriteWrap<'a> {
     }
 }
 
-fn hello(req: Request, res: Response) {
-    let hw = Hello { greeting: "Hälló, wørld".to_string() };
+fn world_handler(req: Request) -> Box<Hello> {
+    Box::new(Hello { greeting: "Hälló, wørld".to_string() })
+}
+
+fn mars_handler(req: Request) -> Box<Hello> {
+    Box::new(Hello { greeting: "Hälló, márs".to_string() })
+}
+
+fn handler(req: Request, res: Response) {
+    let path = match req.uri {
+        uri::RequestUri::AbsolutePath(ref path) => path.clone(),
+        _ => return,
+    };
+
+    let hw = match path.as_ref() {
+        "/world" => world_handler(req),
+        "/mars" => mars_handler(req),
+        _ => return, // 404
+    };
 
     // Create a new WriteWrapper for the response
     let wrapped = &mut WriteWrap { res: res.start().unwrap() };
@@ -44,5 +64,5 @@ fn hello(req: Request, res: Response) {
 
 
 fn main() {
-    Server::http("0.0.0.0:8080").unwrap().handle(hello).unwrap();
+    Server::http("0.0.0.0:8080").unwrap().handle(handler).unwrap();
 }

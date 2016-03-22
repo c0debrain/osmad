@@ -238,3 +238,102 @@ fn main() {
 I have no idea if that was actually more efficient. Gut feel?
 
 git tag v0.0.2
+
+Step 3. Shooting the messenger
+==============================
+
+The server so far only has one path. Easy, with matchers and such, this should be easy as pie.
+
+First thing to note, the request URI is an enum of various types. We (I think) only care about AbsolutePath (TODO: Read up on the other types), so we will only match one.
+
+A cool thing is that we can return from within a match - I wasn't expecting that, so that's cool.
+
+And thirdly, path.as_ref() - see [stack overflow](http://stackoverflow.com/questions/25383488/how-to-match-a-string-in-rust)
+
+
+```rust
+fn handler(req: Request, res: Response) {
+    let path = match req.uri {
+        uri::RequestUri::AbsolutePath(path) => path,
+        _ => return,
+    };
+    let hw = match path.as_ref() {
+        "/" => helloHandler(req),
+        _ => return, // 404
+    };
+    //Do things...
+}
+```
+
+However:
+
+src/main.rs:46:29: 46:32 error: use of partially moved value: `req` [E0382]
+src/main.rs:46         "/" => helloHandler(req),
+                                           ^~~
+src/main.rs:46:29: 46:32 help: run `rustc --explain E0382` to see a detailed explanation
+src/main.rs:40:9: 40:12 note: `req.uri` moved here because it has type `hyper::uri::RequestUri`, which is moved by default
+src/main.rs:40     let uri = req.uri;
+                       ^~~
+src/main.rs:40:9: 40:12 help: if you would like to borrow the value instead, use a `ref` binding as shown:
+src/main.rs:       let ref uri = req.uri;
+
+From the rust docs:
+
+> However, this system does have a certain cost: learning curve. Many new users
+> to Rust experience something we like to call ‘fighting with the borrow
+> checker’, where the Rust compiler refuses to compile a program that the
+> author thinks is valid. This often happens because the programmer's mental
+> model of how ownership should work doesn't match the actual rules that Rust
+> implements. You probably will experience similar things at first. There is
+> good news, however: more experienced Rust developers report that once they
+> work with the rules of the ownership system for a period of time, they fight
+> the borrow checker less and less.
+
+To fix it in this case, reading the hints and many documentations, make the
+matcher match a 'ref', and clone it for the path.
+
+```rust
+    let path = match req.uri {
+        uri::RequestUri::AbsolutePath(ref path) => path.clone(),
+        _ => return,
+    };
+```
+
+Now we can switch:
+
+```
+fn world_handler(req: Request) -> Box<Hello> {
+    Box::new(Hello { greeting: "Hälló, wørld".to_string() })
+}
+
+fn mars_handler(req: Request) -> Box<Hello> {
+    Box::new(Hello { greeting: "Hälló, márs".to_string() })
+}
+
+fn handler(req: Request, res: Response) {
+    let path = match req.uri {
+        uri::RequestUri::AbsolutePath(ref path) => path.clone(),
+        _ => return,
+    };
+
+    let hw = match path.as_ref() {
+        "/world" => world_handler(req),
+        "/mars" => mars_handler(req),
+        _ => return, // 404
+    };
+
+    // Create a new WriteWrapper for the response
+    let wrapped = &mut WriteWrap { res: res.start().unwrap() };
+
+    // Create a new json::Encoder with the wrapped writer
+    let enc = &mut json::Encoder::new(wrapped);
+
+    // The [RustcEncodable] trait adds the 'encode' method to the hw struct.
+    hw.encode(enc).unwrap();
+}
+```
+
+
+That'll do for today.
+
+git tag v0.0.3
