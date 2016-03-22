@@ -337,3 +337,98 @@ fn handler(req: Request, res: Response) {
 That'll do for today.
 
 git tag v0.0.3
+
+Step 4: Data
+============
+
+My first attempt at adding data was a global static, this is surprisingly
+challenging in rust, probably for the same reason I'm going to skip it and go
+right for a real 'database': That's how it will work the end product.
+
+For this booking system, there are 'timeslots', and 'people'. 0 -> 1 people per
+timeslot, 1 timeslot per person. It's a pretty easy data structure, effectively
+it's a timeslot with an optional person. But what if a person could book twice,
+or two people could share a 'group booking', for that future (which, after
+writing this 5 or so times, I know isn't coming, at least with this code
+version) I will use a relational DB with two tables, timeslot and person.
+
+Also, because I want to shove this in a docker container and forget about it,
+and because there are probably, at most, 100 users - I'm going to use sqlite.
+
+Firstly, some imports.
+```
+[dependencies]
+hyper = "*"
+rustc-serialize = "*"
+
+#new:
+rusqlite = "*"
+
+[dependencies.time]
+version = "*"
+features = ["rustc-serialize"]
+```
+
+We are including the serialize 'feature' of the time package, which allows us
+to use it just like our Hello struct. The default serialization isn't what we
+will want in the end, but will do for now
+
+```rust
+fn times_handler<'a>(req: Request) -> Vec<Timeslot> {
+
+    // TODO: This should, obviously, not be in the handler.
+    let conn = Connection::open_in_memory().unwrap();
+    conn.execute("CREATE TABLE timeslot(
+     time TIMESTAMP NOT NULL PRIMARY KEY
+     )",
+                 &[])
+        .unwrap();
+
+    let t = Timeslot { time: time::get_time() };
+    conn.execute("INSERT INTO timeslot (time) VALUES ($1)", &[&t.time]).unwrap();
+
+    // Begin real handler code.
+
+    // Select all
+    let mut stmt = conn.prepare("SELECT time FROM timeslot").unwrap();
+
+    // Turn them into an iterator
+    let mut timeslot_iter = stmt.query_map(&[], |row| Timeslot { time: row.get(0) })
+                                .unwrap();
+
+    // For now, convert the iterator into a vector, later, maybe we can encode the json on the fly?
+    let mut timeslots: Vec<Timeslot> = Vec::new();
+    for ts in timeslot_iter {
+        timeslots.push(ts.unwrap());
+    }
+    timeslots
+}
+```
+
+And just a little bug this brings out in the writer -> writer wrapper. The
+json encoder for 'time' seems to call write with 0 bytes, which must write a
+null byte or something, because curl stops reading.
+
+As a quick debug, I used telnet to make the http request, and... well, it's
+interesting. For now I'll leave this as an exercise for the reader, but I'll be
+coming back to it later on.
+
+To 'quickfix' it for now, I just added a length check in the wrapper.
+
+```rust
+impl<'a> core::fmt::Write for WriteWrap<'a> {
+    fn write_str(&mut self, s: &str) -> core::fmt::Result {
+        // Attempt to write to the response, and unwrap the error to make a fmt::Result instead of
+        // an io::Result
+        //
+        if (s.len() < 1) {
+            return Ok(());
+        }
+
+        match self.res.write(s.as_bytes()) {
+            Ok(_) => Ok(()),
+            Err(_) => Err(core::fmt::Error),
+        }
+    }
+}
+```

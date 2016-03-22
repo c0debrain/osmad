@@ -6,3 +6,8 @@ authors = ["Damien Whitten <damien@rebase.com.au>"]
 [dependencies]
 hyper = "*"
 rustc-serialize = "*"
+rusqlite = "*"
+
+[dependencies.time]
+version = "*"
+features = ["rustc-serialize"]
